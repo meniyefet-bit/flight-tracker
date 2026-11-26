@@ -1,30 +1,141 @@
-name: Feasibility check
+"""Feasibility check: can GitHub Actions read airline sites and Google Flights?"""
+import json
+import os
+import pathlib
+import traceback
 
-on:
-  workflow_dispatch:
+from playwright.sync_api import sync_playwright
 
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
+OUT = pathlib.Path("out")
+OUT.mkdir(exist_ok=True)
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+TARGETS = {
+    "El Al": "https://www.elal.com/en/",
+    "Emirates": "https://www.emirates.com/il/english/",
+    "Etihad": "https://www.etihad.com/en-il/",
+    "flydubai": "https://www.flydubai.com/en/",
+    "Lufthansa": "https://www.lufthansa.com/il/en/homepage",
+    "Austrian": "https://www.austrian.com/il/en/home",
+    "Google Flights": "https://www.google.com/travel/flights?hl=en",
+}
 
-      - name: Install dependencies
-        run: |
-          pip install playwright fast-flights
-          playwright install --with-deps chromium
+BLOCK_MARKERS = [
+    "access denied",
+    "captcha",
+    "unusual traffic",
+    "pardon our interruption",
+    "just a moment",
+    "request blocked",
+    "are you a robot",
+    "verify you are human",
+    "forbidden",
+    "blocked",
+]
 
-      - name: Run feasibility check
-        run: python feasibility.py
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
-      - name: Save screenshots and results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: feasibility-results
-          path: out/
+
+def check_site(browser, name, url):
+    result = {"name": name, "url": url}
+    context = browser.new_context(
+        user_agent=USER_AGENT,
+        locale="en-US",
+        viewport={"width": 1366, "height": 850},
+    )
+    page = context.new_page()
+    try:
+        response = page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(6000)
+        text = page.inner_text("body")[:5000].lower()
+        title = page.title()
+        found = [m for m in BLOCK_MARKERS if m in text or m in title.lower()]
+        result.update(
+            status=response.status if response else None,
+            final_url=page.url,
+            title=title,
+            text_length=len(text),
+            block_markers=found,
+            verdict="BLOCKED" if (found or (response and response.status >= 400)) else "OK",
+        )
+        page.screenshot(path=str(OUT / f"{name.replace(' ', '_')}.png"))
+    except Exception as exc:
+        result.update(verdict="ERROR", error=str(exc)[:300])
+    finally:
+        context.close()
+    return result
+
+
+def check_google_flights_lib():
+    result = {"name": "fast-flights library (TLV-PRG)"}
+    try:
+        from fast_flights import FlightQuery, Passengers, create_query, get_flights
+
+        try:
+            passengers = Passengers(adults=2, children=3)
+        except Exception:
+            passengers = Passengers(adults=1)
+            result["note"] = "fell back to 1 adult"
+
+        query = create_query(
+            flights=[
+                FlightQuery(date="2027-07-15", from_airport="TLV", to_airport="PRG"),
+                FlightQuery(date="2027-07-25", from_airport="PRG", to_airport="TLV"),
+            ],
+            trip="round-trip",
+            seat="economy",
+            passengers=passengers,
+            language="en-US",
+            currency="ILS",
+        )
+        flights = get_flights(query)
+        result["verdict"] = "OK" if flights else "EMPTY"
+        result["count"] = len(flights) if flights else 0
+        result["sample"] = [repr(f)[:300] for f in list(flights)[:3]]
+    except Exception as exc:
+        result["verdict"] = "ERROR"
+        result["error"] = str(exc)[:300]
+        result["trace"] = traceback.format_exc()[-600:]
+    return result
+
+
+def main():
+    results = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        for name, url in TARGETS.items():
+            print(f"Checking {name} ...", flush=True)
+            res = check_site(browser, name, url)
+            print(json.dumps(res, ensure_ascii=False), flush=True)
+            results.append(res)
+        browser.close()
+
+    print("Checking Google Flights library ...", flush=True)
+    lib = check_google_flights_lib()
+    print(json.dumps(lib, ensure_ascii=False), flush=True)
+    results.append(lib)
+
+    (OUT / "results.json").write_text(
+        json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    lines = ["| Site | Verdict | HTTP | Notes |", "|---|---|---|---|"]
+    for r in results:
+        notes = ", ".join(r.get("block_markers", [])) or r.get("error", "") or r.get("note", "")
+        lines.append(f"| {r['name']} | {r.get('verdict')} | {r.get('status', '')} | {notes[:80]} |")
+    summary = "\n".join(lines)
+    print("\n" + summary)
+
+    summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_file:
+        with open(summary_file, "a", encoding="utf-8") as fh:
+            fh.write("## Feasibility results\n\n" + summary + "\n")
+
+
+if __name__ == "__main__":
+    main()
