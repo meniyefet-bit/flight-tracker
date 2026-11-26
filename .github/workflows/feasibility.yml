@@ -16,7 +16,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install playwright fast-flights
+          pip install playwright fast-flights typing_extensions
           playwright install --with-deps chromium
 
       - name: Run feasibility check
