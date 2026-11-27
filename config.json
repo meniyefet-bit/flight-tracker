@@ -1,0 +1,109 @@
+{
+  "window": {
+    "depart_from": "2027-07-01",
+    "return_by": "2027-08-25",
+    "min_days": 9,
+    "max_days": 14
+  },
+  "origin": "TLV",
+  "adults": 1,
+  "currency": "ILS",
+  "drop_threshold_pct": 5,
+  "layover_ok_hours": 5,
+  "layover_max_hours": 10,
+  "cheap_exception_pct": 15,
+  "departure_step_days": 1,
+  "destinations": [
+    {
+      "name": "פראג",
+      "airports": [
+        "PRG"
+      ],
+      "max_stops": 0,
+      "active": true
+    },
+    {
+      "name": "וינה",
+      "airports": [
+        "VIE"
+      ],
+      "max_stops": 0,
+      "active": true
+    },
+    {
+      "name": "ברטיסלבה",
+      "airports": [
+        "BTS"
+      ],
+      "max_stops": 0,
+      "active": true
+    },
+    {
+      "name": "טוקיו",
+      "airports": [
+        "NRT"
+      ],
+      "max_stops": 1,
+      "active": true
+    },
+    {
+      "name": "וייטנאם",
+      "airports": [
+        "HAN",
+        "SGN"
+      ],
+      "max_stops": 1,
+      "active": true
+    }
+  ],
+  "airlines": [
+    {
+      "name": "El Al",
+      "match": [
+        "el al"
+      ],
+      "url": "https://www.elal.com",
+      "iata": "LY"
+    },
+    {
+      "name": "Etihad",
+      "match": [
+        "etihad"
+      ],
+      "url": "https://www.etihad.com",
+      "iata": "EY"
+    },
+    {
+      "name": "flydubai",
+      "match": [
+        "flydubai"
+      ],
+      "url": "https://www.flydubai.com",
+      "iata": "FZ"
+    },
+    {
+      "name": "Emirates",
+      "match": [
+        "emirates"
+      ],
+      "url": "https://www.emirates.com",
+      "iata": "EK"
+    },
+    {
+      "name": "Lufthansa",
+      "match": [
+        "lufthansa"
+      ],
+      "url": "https://www.lufthansa.com",
+      "iata": "LH"
+    },
+    {
+      "name": "Austrian",
+      "match": [
+        "austrian"
+      ],
+      "url": "https://www.austrian.com",
+      "iata": "OS"
+    }
+  ]
+}
