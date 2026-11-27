@@ -15,31 +15,46 @@
       "long": false
     },
     "וינה": {
-      "price": 1440,
+      "price": 1355,
       "airlines": [
         "Austrian"
       ],
       "airport": "VIE",
-      "depart": "2027-07-01",
-      "return": "2027-07-10",
-      "days": 9,
+      "depart": "2027-08-08",
+      "return": "2027-08-20",
+      "days": 12,
       "stops": 0,
       "layover_h": 0,
       "url": "https://www.austrian.com",
       "long": false
     },
     "טוקיו": {
-      "price": 5151,
+      "price": 4752,
       "airlines": [
-        "Austrian"
+        "Lufthansa"
       ],
       "airport": "NRT",
-      "depart": "2027-07-15",
-      "return": "2027-07-26",
-      "days": 11,
+      "depart": "2027-08-10",
+      "return": "2027-08-23",
+      "days": 13,
       "stops": 1,
-      "layover_h": 4.8,
-      "url": "https://www.austrian.com",
+      "layover_h": 2.1,
+      "url": "https://www.lufthansa.com",
+      "long": false
+    },
+    "וייטנאם (הו צ'י מין)": {
+      "price": 6542,
+      "airlines": [
+        "El Al",
+        "THAI"
+      ],
+      "airport": "SGN",
+      "depart": "2027-07-11",
+      "return": "2027-07-21",
+      "days": 10,
+      "stops": 1,
+      "layover_h": 3.6,
+      "url": "https://www.elal.com",
       "long": false
     }
   }
