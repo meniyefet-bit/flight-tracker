@@ -1,42 +1,42 @@
 {
   "2026-11-27": {
     "פראג": {
-      "price": 1446,
+      "price": 1411,
       "airlines": [
         "El Al"
       ],
       "airport": "PRG",
-      "depart": "2027-07-05",
-      "return": "2027-07-14",
-      "days": 9,
+      "depart": "2027-07-13",
+      "return": "2027-07-24",
+      "days": 11,
       "stops": 0,
       "layover_h": 0,
       "url": "https://www.elal.com",
       "long": false
     },
     "וינה": {
-      "price": 1428,
+      "price": 1355,
       "airlines": [
         "Austrian"
       ],
       "airport": "VIE",
-      "depart": "2027-07-01",
-      "return": "2027-07-10",
-      "days": 9,
+      "depart": "2027-08-08",
+      "return": "2027-08-20",
+      "days": 12,
       "stops": 0,
       "layover_h": 0,
       "url": "https://www.austrian.com",
       "long": false
     },
     "טוקיו": {
-      "price": 5157,
+      "price": 4752,
       "airlines": [
         "Lufthansa"
       ],
       "airport": "NRT",
-      "depart": "2027-07-03",
-      "return": "2027-07-12",
-      "days": 9,
+      "depart": "2027-08-10",
+      "return": "2027-08-23",
+      "days": 13,
       "stops": 1,
       "layover_h": 2.1,
       "url": "https://www.lufthansa.com",
