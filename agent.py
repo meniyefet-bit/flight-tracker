@@ -326,6 +326,297 @@ def classify(offer, dest, cfg):
 
 
 def query_with_retry(search_fn, origin, code, dep, ret, cfg):
+    """Return (flights, status) where status is 'ok', 'empty' or 'error'.
+    'No flights found' is retried only once (it is usually real); other errors up to RETRIES."""
+    last_status = "error"
+    for attempt in range(RETRIES + 1):
+        try:
+            flights = search_fn(origin, code, dep, ret, cfg)
+            return flights, ("ok" if flights else "empty")
+        except Exception as exc:  # noqa: BLE001
+            not_found = type(exc).__name__ == "FlightsNotFound"
+            last_status = "empty" if not_found else "error"
+            if not_found and attempt >= 1:
+                break
+            time.sleep(1.0 if attempt < RETRIES else 0)
+    return [], last_status
+
+
+def combos(cfg):
+    w = cfg["window"]
+    start = date.fromisoformat(w["depart_from"])
+    end = date.fromisoformat(w["return_by"])
+    step = max(1, int(cfg.get("departure_step_days", 1)))
+    out = []
+    d = start
+    while d <= end:
+        for stay in range(w["min_days"], w["max_days"] + 1):
+            r = d + timedelta(days=stay)
+            if r <= end:
+                out.append((d, r, stay))
+        d += timedelta(days=step)
+    return out
+
+
+def _why_rejected(offer, dest, cfg):
+    if offer["stops"] > dest["max_stops"]:
+        return "too_many_stops"
+    names = [n.lower() for n in offer["airlines"]]
+    if not any(m in n for a in cfg["airlines"] for m in a["match"] for n in names):
+        return "other_airline"
+    return "long_layover"
+
+
+def run_scan(cfg, search_fn=search_google, pause=PAUSE_SECONDS, budget=SCAN_BUDGET_SECONDS, workers=WORKERS):
+    from concurrent.futures import ThreadPoolExecutor
+
+    started = time.time()
+    active = [d for d in cfg["destinations"] if d.get("active", True)]
+    best = {d["name"]: {"short": None, "long": None} for d in active}
+    stats = {"queries": 0, "errors": 0, "empty": 0, "stopped": "", "diag": {}}
+    for d in active:
+        stats["diag"][d["name"]] = {"offers": 0, "accepted": 0, "other_airline": 0,
+                                    "too_many_stops": 0, "long_layover": 0, "samples": []}
+    tasks = [(dep, ret, stay, dest, code)
+             for dep, ret, stay in combos(cfg)
+             for dest in active for code in dest["airports"]]
+    state = {"consecutive": 0, "stop": ""}
+
+    def work(task):
+        dep, ret, stay, dest, code = task
+        if state["stop"] or time.time() - started > budget:
+            return task, None, "skipped"
+        flights, status = query_with_retry(search_fn, cfg["origin"], code, dep, ret, cfg)
+        time.sleep(pause)
+        return task, flights, status
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        for task, flights, status in pool.map(work, tasks):
+            dep, ret, stay, dest, code = task
+            if status == "skipped":
+                if not state["stop"]:
+                    stats["stopped"] = "time"
+                continue
+            stats["queries"] += 1
+            if status == "error":
+                stats["errors"] += 1
+                state["consecutive"] += 1
+            elif status == "empty":
+                stats["empty"] += 1
+                state["consecutive"] = 0
+            else:
+                state["consecutive"] = 0
+            if state["consecutive"] >= MAX_CONSECUTIVE_FAILS and not state["stop"]:
+                state["stop"] = "blocked"
+                stats["stopped"] = "blocked"
+            diag = stats["diag"][dest["name"]]
+            for f in flights or []:
+                offer = parse_offer(f)
+                if not offer:
+                    continue
+                diag["offers"] += 1
+                kind = classify(offer, dest, cfg)
+                if not kind:
+                    diag[_why_rejected(offer, dest, cfg)] += 1
+                    if len(diag["samples"]) < 8:
+                        diag["samples"].append(
+                            f"{'+'.join(offer['airlines'])} {offer['stops']}stops {'/'.join(offer['route'])} {offer['price']}")
+                    continue
+                diag["accepted"] += 1
+                known = [x for x in offer["layovers"] if x is not None]
+                rec = {
+                    "price": offer["price"],
+                    "airlines": offer["airlines"],
+                    "airport": code,
+                    "depart": dep.isoformat(),
+                    "return": ret.isoformat(),
+                    "days": stay,
+                    "stops": offer["stops"],
+                    "layover_h": round(max(known), 1) if known else 0,
+                    "url": airline_url(offer["airlines"], cfg),
+                }
+                cur = best[dest["name"]][kind]
+                if cur is None or rec["price"] < cur["price"]:
+                    best[dest["name"]][kind] = rec
+    return best, stats
+
+
+# ---------------------------------------------------------------- report
+def pick_entries(best, cfg):
+    """Choose the headline offer per destination. Returns {name: (headline, long_alt or None)}."""
+    entries = {}
+    for name, kinds in best.items():
+        short, long_ = kinds["short"], kinds["long"]
+        if short is None and long_ is None:
+            continue
+        if short is None:
+            entries[name] = (dict(long_, long=True), None)
+            continue
+        alt = None
+        if long_ and long_["price"] <= short["price"] * (1 - cfg["cheap_exception_pct"] / 100):
+            alt = long_
+        entries[name] = (dict(short, long=False), alt)
+    return entries
+
+
+def fmt_price(p):
+    return f"{int(round(p)):,} ₪"
+
+
+def fmt_day(iso):
+    d = date.fromisoformat(iso)
+    return f"{d.day:02d}.{d.month:02d}"
+
+
+def previous_entry(history, name, today):
+    for day in sorted(history, reverse=True):
+        if day < today and name in history[day]:
+            return day, history[day][name]
+    return None, None
+
+
+def stops_text(rec):
+    return "ישיר" if rec["stops"] == 0 else f"קונקשן אחד (המתנה {rec['layover_h']:g} ש')"
+
+
+def offer_lines(rec, cfg):
+    airlines = " + ".join(rec["airlines"])
+    lines = [f"{airlines} · {stops_text(rec)}", f"{fmt_day(rec['depart'])} ← {fmt_day(rec['return'])} ({rec['days']} ימים) · {rec['airport']}"]
+    return lines
+
+
+def build_report(cfg, today, entries, history, stats):
+    d = date.fromisoformat(today)
+    lines = [f"✈️ מעקב טיסות · {d.day:02d}.{d.month:02d}.{d.year}", "מחיר לנוסע אחד, הלוך חזור, ללא מזוודה", ""]
+    if not entries:
+        lines.append("לא נמצאו היום תוצאות מתאימות.")
+    for name, (rec, alt) in entries.items():
+        lines.append(f"📍 {name} · {fmt_price(rec['price'])}" + (" ⚠️ המתנה ארוכה" if rec.get("long") else ""))
+        lines.extend("   " + x for x in offer_lines(rec, cfg))
+        prev_day, prev = previous_entry(history, name, today)
+        if prev:
+            diff = rec["price"] - prev["price"]
+            when = "אתמול" if prev_day == (d - timedelta(days=1)).isoformat() else fmt_day(prev_day)
+            if abs(diff) < 0.5:
+                lines.append(f"   ללא שינוי מ{when}")
+            else:
+                pct = abs(diff) / prev["price"] * 100
+                arrow = "▼" if diff < 0 else "▲"
+                lines.append(f"   {arrow} {fmt_price(abs(diff))} ({pct:.1f}%) לעומת {when} ({fmt_price(prev['price'])})")
+                if diff < 0 and pct >= cfg["drop_threshold_pct"]:
+                    lines.append(f"   🔥 ירידה של {pct:.1f}%")
+            earlier = [h[name]["price"] for day, h in history.items() if day < today and name in h]
+            if earlier and rec["price"] < min(earlier):
+                lines.append("   🏆 המחיר הנמוך ביותר מאז תחילת המעקב")
+        else:
+            lines.append("   יום ראשון במעקב")
+        if rec.get("url"):
+            lines.append(f"   🔗 {rec['url']}")
+        if alt:
+            lines.append(f"   💡 זול יותר עם המתנה ארוכה: {fmt_price(alt['price'])} ({' + '.join(alt['airlines'])}, "
+                         f"{fmt_day(alt['depart'])}←{fmt_day(alt['return'])}, המתנה {alt['layover_h']:g} ש')")
+        lines.append("")
+    lines.append("מקור: Google Flights (לא האתר הרשמי של החברה). בדוק מחיר סופי באתר החברה.")
+    q = stats.get("queries", 0)
+    if q and (stats["errors"] / q) > 0.4:
+        lines.append(f"⚠️ {stats['errors']} מתוך {q} חיפושים נכשלו, ייתכן שהתוצאות חלקיות.")
+    if stats.get("stopped") == "time":
+        lines.append("⚠️ הסריקה נעצרה בגלל מגבלת זמן, התוצאות חלקיות.")
+    if stats.get("stopped") == "blocked":
+        lines.append("⚠️ הסריקה נעצרה: רצף שגיאות ארוך, ייתכן שגוגל חסם זמנית.")
+    return "\n".join(lines).strip()
+
+
+# ------------------------------------------------------------------ main
+def wait_for_send_time():
+    if os.environ.get("GITHUB_EVENT_NAME") != "schedule":
+        return
+    now = datetime.now(IL)
+    target = now.replace(hour=SEND_HOUR, minute=0, second=0, microsecond=0)
+    wait = (target - now).total_seconds()
+    if 0 < wait <= MAX_WAIT_SECONDS:
+        print(f"Waiting {int(wait)}s until {SEND_HOUR}:00 Israel time", flush=True)
+        time.sleep(wait)
+
+
+def main():
+    cfg = load_json(CONFIG_PATH, None)
+    if cfg is None:
+        raise SystemExit("config.json is missing")
+    history = load_json(HISTORY_PATH, {})
+    state = load_json(STATE_PATH, {"last_update_id": 0})
+
+    process_commands(cfg, state)
+    save_json(CONFIG_PATH, cfg)
+    save_json(STATE_PATH, state)
+
+    best, stats = run_scan(cfg)
+    print("SCAN STATS:", json.dumps(stats, ensure_ascii=False))
+    entries = pick_entries(best, cfg)
+    today = datetime.now(IL).date().isoformat()
+    message = build_report(cfg, today, entries, history, stats)
+
+    history[today] = {name: rec for name, (rec, _alt) in entries.items()}
+    save_json(HISTORY_PATH, history)
+
+    wait_for_send_time()
+    tg_send(message)
+
+
+if __name__ == "__main__":
+    main()
+":
+                # filter not accepted by this library version -> keep going unfiltered
+                pass
+    if not ok and last_exc:
+        raise last_exc
+    return results
+
+
+def parse_offer(flight):
+    segs = list(getattr(flight, "flights", []) or [])
+    airlines = list(getattr(flight, "airlines", []) or [])
+    price = getattr(flight, "price", None)
+    if not segs or not isinstance(price, (int, float)) or price <= 0:
+        return None
+    layovers = []
+    for a, b in zip(segs, segs[1:]):
+        try:
+            layovers.append((_dt(b.departure) - _dt(a.arrival)).total_seconds() / 3600)
+        except Exception:  # noqa: BLE001
+            layovers.append(None)
+    route = []
+    for s in segs:
+        try:
+            route.append(f"{s.from_airport.code}-{s.to_airport.code}")
+        except Exception:  # noqa: BLE001
+            route.append("?")
+    return {"price": price, "airlines": airlines, "stops": len(segs) - 1, "layovers": layovers, "route": route}
+
+
+def airline_url(offer_airlines, cfg):
+    for a in cfg["airlines"]:
+        for name in offer_airlines:
+            if any(m in name.lower() for m in a["match"]):
+                return a.get("url", "")
+    return ""
+
+
+def classify(offer, dest, cfg):
+    """Return 'short', 'long' or None (rejected)."""
+    if offer["stops"] > dest["max_stops"]:
+        return None
+    names = [n.lower() for n in offer["airlines"]]
+    if not any(m in n for a in cfg["airlines"] for m in a["match"] for n in names):
+        return None
+    known = [x for x in offer["layovers"] if x is not None]
+    longest = max(known) if known else 0
+    if longest > cfg["layover_max_hours"]:
+        return None
+    return "long" if longest > cfg["layover_ok_hours"] else "short"
+
+
+def query_with_retry(search_fn, origin, code, dep, ret, cfg):
     """Return (flights, status) where status is 'ok', 'empty' or 'error'."""
     last_status = "error"
     for attempt in range(RETRIES + 1):
