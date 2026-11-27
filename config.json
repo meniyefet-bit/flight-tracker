@@ -47,9 +47,8 @@
       "active": true
     },
     {
-      "name": "וייטנאם",
+      "name": "וייטנאם (הו צ'י מין)",
       "airports": [
-        "HAN",
         "SGN"
       ],
       "max_stops": 1,
