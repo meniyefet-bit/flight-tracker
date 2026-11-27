@@ -12,7 +12,7 @@
   "layover_ok_hours": 5,
   "layover_max_hours": 10,
   "cheap_exception_pct": 15,
-  "departure_step_days": 1,
+  "departure_step_days": 2,
   "destinations": [
     {
       "name": "פראג",
