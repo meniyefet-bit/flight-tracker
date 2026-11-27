@@ -23,6 +23,7 @@ SEND_HOUR = 20                  # scheduled runs wait until 20:00 Israel time
 MAX_WAIT_SECONDS = 100 * 60
 SCAN_BUDGET_SECONDS = 75 * 60
 PAUSE_SECONDS = 0.5
+WORKERS = 4
 RETRIES = 2
 MAX_CONSECUTIVE_FAILS = 60
 
@@ -353,55 +354,83 @@ def combos(cfg):
     return out
 
 
-def run_scan(cfg, search_fn=search_google, pause=PAUSE_SECONDS, budget=SCAN_BUDGET_SECONDS):
+def _why_rejected(offer, dest, cfg):
+    if offer["stops"] > dest["max_stops"]:
+        return "too_many_stops"
+    names = [n.lower() for n in offer["airlines"]]
+    if not any(m in n for a in cfg["airlines"] for m in a["match"] for n in names):
+        return "other_airline"
+    return "long_layover"
+
+
+def run_scan(cfg, search_fn=search_google, pause=PAUSE_SECONDS, budget=SCAN_BUDGET_SECONDS, workers=WORKERS):
+    from concurrent.futures import ThreadPoolExecutor
+
     started = time.time()
     active = [d for d in cfg["destinations"] if d.get("active", True)]
     best = {d["name"]: {"short": None, "long": None} for d in active}
-    stats = {"queries": 0, "errors": 0, "empty": 0, "stopped": ""}
-    consecutive = 0
+    stats = {"queries": 0, "errors": 0, "empty": 0, "stopped": "", "diag": {}}
+    for d in active:
+        stats["diag"][d["name"]] = {"offers": 0, "accepted": 0, "other_airline": 0,
+                                    "too_many_stops": 0, "long_layover": 0}
+    tasks = [(dep, ret, stay, dest, code)
+             for dep, ret, stay in combos(cfg)
+             for dest in active for code in dest["airports"]]
+    state = {"consecutive": 0, "stop": ""}
 
-    for dep, ret, stay in combos(cfg):
-        for dest in active:
-            for code in dest["airports"]:
-                if time.time() - started > budget:
+    def work(task):
+        dep, ret, stay, dest, code = task
+        if state["stop"] or time.time() - started > budget:
+            return task, None, "skipped"
+        flights, status = query_with_retry(search_fn, cfg["origin"], code, dep, ret, cfg)
+        time.sleep(pause)
+        return task, flights, status
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        for task, flights, status in pool.map(work, tasks):
+            dep, ret, stay, dest, code = task
+            if status == "skipped":
+                if not state["stop"]:
                     stats["stopped"] = "time"
-                    return best, stats
-                flights, status = query_with_retry(search_fn, cfg["origin"], code, dep, ret, cfg)
-                stats["queries"] += 1
-                if status == "error":
-                    stats["errors"] += 1
-                    consecutive += 1
-                elif status == "empty":
-                    stats["empty"] += 1
-                    consecutive = 0
-                else:
-                    consecutive = 0
-                if consecutive >= MAX_CONSECUTIVE_FAILS:
-                    stats["stopped"] = "blocked"
-                    return best, stats
-                for f in flights:
-                    offer = parse_offer(f)
-                    if not offer:
-                        continue
-                    kind = classify(offer, dest, cfg)
-                    if not kind:
-                        continue
-                    known = [x for x in offer["layovers"] if x is not None]
-                    rec = {
-                        "price": offer["price"],
-                        "airlines": offer["airlines"],
-                        "airport": code,
-                        "depart": dep.isoformat(),
-                        "return": ret.isoformat(),
-                        "days": stay,
-                        "stops": offer["stops"],
-                        "layover_h": round(max(known), 1) if known else 0,
-                        "url": airline_url(offer["airlines"], cfg),
-                    }
-                    cur = best[dest["name"]][kind]
-                    if cur is None or rec["price"] < cur["price"]:
-                        best[dest["name"]][kind] = rec
-                time.sleep(pause)
+                continue
+            stats["queries"] += 1
+            if status == "error":
+                stats["errors"] += 1
+                state["consecutive"] += 1
+            elif status == "empty":
+                stats["empty"] += 1
+                state["consecutive"] = 0
+            else:
+                state["consecutive"] = 0
+            if state["consecutive"] >= MAX_CONSECUTIVE_FAILS and not state["stop"]:
+                state["stop"] = "blocked"
+                stats["stopped"] = "blocked"
+            diag = stats["diag"][dest["name"]]
+            for f in flights or []:
+                offer = parse_offer(f)
+                if not offer:
+                    continue
+                diag["offers"] += 1
+                kind = classify(offer, dest, cfg)
+                if not kind:
+                    diag[_why_rejected(offer, dest, cfg)] += 1
+                    continue
+                diag["accepted"] += 1
+                known = [x for x in offer["layovers"] if x is not None]
+                rec = {
+                    "price": offer["price"],
+                    "airlines": offer["airlines"],
+                    "airport": code,
+                    "depart": dep.isoformat(),
+                    "return": ret.isoformat(),
+                    "days": stay,
+                    "stops": offer["stops"],
+                    "layover_h": round(max(known), 1) if known else 0,
+                    "url": airline_url(offer["airlines"], cfg),
+                }
+                cur = best[dest["name"]][kind]
+                if cur is None or rec["price"] < cur["price"]:
+                    best[dest["name"]][kind] = rec
     return best, stats
 
 
@@ -515,6 +544,7 @@ def main():
     save_json(STATE_PATH, state)
 
     best, stats = run_scan(cfg)
+    print("SCAN STATS:", json.dumps(stats, ensure_ascii=False))
     entries = pick_entries(best, cfg)
     today = datetime.now(IL).date().isoformat()
     message = build_report(cfg, today, entries, history, stats)
