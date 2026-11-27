@@ -9,6 +9,7 @@ import json
 import os
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -56,12 +57,22 @@ def save_json(path, data):
 def tg_call(method, params):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
+        print("Telegram: TELEGRAM_BOT_TOKEN secret is missing/empty")
         return None
+    token = token.strip()
     data = urllib.parse.urlencode(params).encode()
     req = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}", data=data)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode()[:200]
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"Telegram error: HTTP {exc.code} {body}")
+        return None
     except Exception as exc:  # noqa: BLE001
         print("Telegram error:", type(exc).__name__)
         return None
