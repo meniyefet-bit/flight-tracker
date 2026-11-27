@@ -6,7 +6,7 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -14,10 +14,25 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install fast-flights
         run: pip install fast-flights typing_extensions
 
-      - name: Run scan test
+      - name: Probe with fast-flights
+        continue-on-error: true
+        env:
+          PROBE_LABEL: fast-flights
+        run: python scan_test.py
+
+      - name: Switch to faster-flights
+        continue-on-error: true
+        run: |
+          pip uninstall -y fast-flights
+          pip install faster-flights typing_extensions
+
+      - name: Probe with faster-flights
+        continue-on-error: true
+        env:
+          PROBE_LABEL: faster-flights
         run: python scan_test.py
 
       - name: Save results
