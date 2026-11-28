@@ -36,7 +36,17 @@
         "BTS"
       ],
       "max_stops": 0,
-      "active": true
+      "active": true,
+      "extra_airlines": [
+        {
+          "name": "Wizz Air",
+          "match": [
+            "wizz"
+          ],
+          "iata": "W6",
+          "url": "https://www.wizzair.com"
+        }
+      ]
     },
     {
       "name": "טוקיו",
