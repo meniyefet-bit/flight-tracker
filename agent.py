@@ -21,7 +21,7 @@ STATE_PATH = "state.json"
 IL = ZoneInfo("Asia/Jerusalem")
 SEND_HOUR = 20                  # scheduled runs wait until 20:00 Israel time
 MAX_WAIT_SECONDS = 100 * 60
-SCAN_BUDGET_SECONDS = 75 * 60
+SCAN_BUDGET_SECONDS = 240 * 60
 PAUSE_SECONDS = 0.5
 WORKERS = 4
 RETRIES = 2
@@ -492,6 +492,12 @@ def stops_text(rec):
     return "ישיר" if rec["stops"] == 0 else f"קונקשן אחד (המתנה {rec['layover_h']:g} ש')"
 
 
+def google_link(rec, cfg):
+    q = (f"Flights from {cfg['origin']} to {rec['airport']} on {rec['depart']} "
+         f"through {rec['return']}")
+    return "https://www.google.com/travel/flights?hl=he&curr=" + cfg.get("currency", "ILS") + "&q=" + urllib.parse.quote(q)
+
+
 def offer_lines(rec, cfg):
     airlines = " + ".join(rec["airlines"])
     lines = [f"{airlines} · {stops_text(rec)}", f"{fmt_day(rec['depart'])} ← {fmt_day(rec['return'])} ({rec['days']} ימים) · {rec['airport']}"]
@@ -507,7 +513,9 @@ def build_report(cfg, today, entries, history, stats):
         lines.append(f"📍 {name} · {fmt_price(rec['price'])}" + (" ⚠️ המתנה ארוכה" if rec.get("long") else ""))
         lines.extend("   " + x for x in offer_lines(rec, cfg))
         prev_day, prev = previous_entry(history, name, today)
-        if prev:
+        if stats.get("stopped"):
+            lines.append("   (אין השוואה: הסריקה חלקית)")
+        elif prev:
             diff = rec["price"] - prev["price"]
             when = "אתמול" if prev_day == (d - timedelta(days=1)).isoformat() else fmt_day(prev_day)
             if abs(diff) < 0.5:
@@ -524,12 +532,13 @@ def build_report(cfg, today, entries, history, stats):
         else:
             lines.append("   יום ראשון במעקב")
         if rec.get("url"):
-            lines.append(f"   🔗 {rec['url']}")
+            lines.append(f"   🔗 אתר החברה: {rec['url']}")
+        lines.append(f"   🔎 המוכרים בגוגל טיסות: {google_link(rec, cfg)}")
         if alt:
             lines.append(f"   💡 זול יותר עם המתנה ארוכה: {fmt_price(alt['price'])} ({' + '.join(alt['airlines'])}, "
                          f"{fmt_day(alt['depart'])}←{fmt_day(alt['return'])}, המתנה {alt['layover_h']:g} ש')")
         lines.append("")
-    lines.append("מקור: Google Flights (לא האתר הרשמי של החברה). בדוק מחיר סופי באתר החברה.")
+    lines.append("מקור: Google Flights. המחיר הוא הזול ביותר בגוגל, לעתים מאתר סחר ולא מהחברה עצמה. בדוק מחיר סופי באתר החברה.")
     q = stats.get("queries", 0)
     if q and (stats["errors"] / q) > 0.4:
         lines.append(f"⚠️ {stats['errors']} מתוך {q} חיפושים נכשלו, ייתכן שהתוצאות חלקיות.")
@@ -569,8 +578,9 @@ def main():
     today = datetime.now(IL).date().isoformat()
     message = build_report(cfg, today, entries, history, stats)
 
-    history[today] = {name: rec for name, (rec, _alt) in entries.items()}
-    save_json(HISTORY_PATH, history)
+    if not stats.get("stopped"):  # a partial scan must not become tomorrow's baseline
+        history[today] = {name: rec for name, (rec, _alt) in entries.items()}
+        save_json(HISTORY_PATH, history)
 
     wait_for_send_time()
     tg_send(message)
