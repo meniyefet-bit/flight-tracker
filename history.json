@@ -66,67 +66,67 @@
       ],
       "airport": "PRG",
       "depart": "2027-07-13",
-      "return": "2027-07-25",
-      "days": 12,
+      "return": "2027-07-24",
+      "days": 11,
       "stops": 0,
       "layover_h": 0,
       "url": "https://www.elal.com",
       "long": false
     },
     "וינה": {
-      "price": 1357,
+      "price": 1440,
       "airlines": [
         "Austrian"
       ],
       "airport": "VIE",
-      "depart": "2027-08-08",
-      "return": "2027-08-20",
-      "days": 12,
+      "depart": "2027-07-02",
+      "return": "2027-07-11",
+      "days": 9,
       "stops": 0,
       "layover_h": 0,
       "url": "https://www.austrian.com",
       "long": false
     },
     "ברטיסלבה": {
-      "price": 1203,
+      "price": 1021,
       "airlines": [
         "Wizz Air"
       ],
       "airport": "BTS",
-      "depart": "2027-07-13",
-      "return": "2027-07-25",
-      "days": 12,
+      "depart": "2027-07-03",
+      "return": "2027-07-17",
+      "days": 14,
       "stops": 0,
       "layover_h": 0,
       "url": "https://www.wizzair.com",
       "long": false
     },
     "טוקיו": {
-      "price": 4752,
+      "price": 5154,
       "airlines": [
-        "Lufthansa"
+        "Austrian"
       ],
       "airport": "NRT",
-      "depart": "2027-08-10",
-      "return": "2027-08-23",
-      "days": 13,
+      "depart": "2027-07-08",
+      "return": "2027-07-19",
+      "days": 11,
       "stops": 1,
-      "layover_h": 2.1,
-      "url": "https://www.lufthansa.com",
+      "layover_h": 4.8,
+      "url": "https://www.austrian.com",
       "long": false
     },
     "וייטנאם (הו צ'י מין)": {
-      "price": 7723,
+      "price": 6542,
       "airlines": [
         "El Al",
         "THAI"
       ],
       "airport": "SGN",
-      "depart": "2027-08-14",
-      "return": "2027-08-25",
-      "days": 11,
+      "depart": "2027-07-15",
+      "return": "2027-07-25",
+      "days": 10,
       "stops": 1,
-      "layover_h": 2.4,
+      "layover_h": 3.5,
       "url": "https://www.elal.com",
       "long": false
     }
