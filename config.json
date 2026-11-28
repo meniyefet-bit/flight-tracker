@@ -63,6 +63,14 @@
       ],
       "max_stops": 1,
       "active": true
+    },
+    {
+      "name": "אתונה",
+      "airports": [
+        "ATH"
+      ],
+      "max_stops": 0,
+      "active": true
     }
   ],
   "airlines": [
