@@ -220,6 +220,18 @@ def _dt(sd):
     return datetime(y, m, d, t[0] if len(t) > 0 else 0, t[1] if len(t) > 1 else 0)
 
 
+def airlines_for(dest, cfg):
+    """Global airlines plus any per-destination extras (e.g. Wizz Air for Bratislava only)."""
+    return list(cfg["airlines"]) + list(dest.get("extra_airlines", []))
+
+
+def _dest_for(code, cfg):
+    for d in cfg["destinations"]:
+        if code in d["airports"]:
+            return d
+    return None
+
+
 def _max_stops_for(code, cfg):
     for d in cfg["destinations"]:
         if code in d["airports"]:
@@ -262,7 +274,8 @@ def search_google(origin, dest, dep, ret, cfg):
     """Two complementary queries, merged: (1) filtered to our airlines and stop limit
     (Google then returns them even when they are not among its default top results),
     (2) unfiltered 'cheapest first' list. Raises only if both fail."""
-    iata = [a["iata"] for a in cfg["airlines"] if a.get("iata")]
+    d = _dest_for(dest, cfg)
+    iata = [a["iata"] for a in (airlines_for(d, cfg) if d else cfg["airlines"]) if a.get("iata")]
     results, last_exc, ok = [], None, False
     attempts = []
     if iata:
@@ -303,8 +316,8 @@ def parse_offer(flight):
     return {"price": price, "airlines": airlines, "stops": len(segs) - 1, "layovers": layovers, "route": route}
 
 
-def airline_url(offer_airlines, cfg):
-    for a in cfg["airlines"]:
+def airline_url(offer_airlines, cfg, dest=None):
+    for a in (airlines_for(dest, cfg) if dest else cfg["airlines"]):
         for name in offer_airlines:
             if any(m in name.lower() for m in a["match"]):
                 return a.get("url", "")
@@ -316,7 +329,7 @@ def classify(offer, dest, cfg):
     if offer["stops"] > dest["max_stops"]:
         return None
     names = [n.lower() for n in offer["airlines"]]
-    if not any(m in n for a in cfg["airlines"] for m in a["match"] for n in names):
+    if not any(m in n for a in airlines_for(dest, cfg) for m in a["match"] for n in names):
         return None
     known = [x for x in offer["layovers"] if x is not None]
     longest = max(known) if known else 0
@@ -362,7 +375,7 @@ def _why_rejected(offer, dest, cfg):
     if offer["stops"] > dest["max_stops"]:
         return "too_many_stops"
     names = [n.lower() for n in offer["airlines"]]
-    if not any(m in n for a in cfg["airlines"] for m in a["match"] for n in names):
+    if not any(m in n for a in airlines_for(dest, cfg) for m in a["match"] for n in names):
         return "other_airline"
     return "long_layover"
 
@@ -433,7 +446,7 @@ def run_scan(cfg, search_fn=search_google, pause=PAUSE_SECONDS, budget=SCAN_BUDG
                     "days": stay,
                     "stops": offer["stops"],
                     "layover_h": round(max(known), 1) if known else 0,
-                    "url": airline_url(offer["airlines"], cfg),
+                    "url": airline_url(offer["airlines"], cfg, dest),
                 }
                 cur = best[dest["name"]][kind]
                 if cur is None or rec["price"] < cur["price"]:
