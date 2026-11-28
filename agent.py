@@ -403,13 +403,9 @@ def run_scan(cfg, search_fn=search_google, pause=PAUSE_SECONDS, budget=SCAN_BUDG
         time.sleep(pause)
         return task, flights, status
 
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        for task, flights, status in pool.map(work, tasks):
-            dep, ret, stay, dest, code = task
-            if status == "skipped":
-                if not state["stop"]:
-                    stats["stopped"] = "time"
-                continue
+    def handle(task, flights, status, count=True):
+        dep, ret, stay, dest, code = task
+        if count:
             stats["queries"] += 1
             if status == "error":
                 stats["errors"] += 1
@@ -422,35 +418,58 @@ def run_scan(cfg, search_fn=search_google, pause=PAUSE_SECONDS, budget=SCAN_BUDG
             if state["consecutive"] >= MAX_CONSECUTIVE_FAILS and not state["stop"]:
                 state["stop"] = "blocked"
                 stats["stopped"] = "blocked"
-            diag = stats["diag"][dest["name"]]
-            for f in flights or []:
-                offer = parse_offer(f)
-                if not offer:
+        diag = stats["diag"][dest["name"]]
+        for f in flights or []:
+            offer = parse_offer(f)
+            if not offer:
+                continue
+            diag["offers"] += 1
+            kind = classify(offer, dest, cfg)
+            if not kind:
+                diag[_why_rejected(offer, dest, cfg)] += 1
+                if len(diag["samples"]) < 8:
+                    diag["samples"].append(
+                        f"{'+'.join(offer['airlines'])} {offer['stops']}stops {'/'.join(offer['route'])} {offer['price']}")
+                continue
+            diag["accepted"] += 1
+            known = [x for x in offer["layovers"] if x is not None]
+            rec = {
+                "price": offer["price"],
+                "airlines": offer["airlines"],
+                "airport": code,
+                "depart": dep.isoformat(),
+                "return": ret.isoformat(),
+                "days": stay,
+                "stops": offer["stops"],
+                "layover_h": round(max(known), 1) if known else 0,
+                "url": airline_url(offer["airlines"], cfg, dest),
+            }
+            cur = best[dest["name"]][kind]
+            if cur is None or rec["price"] < cur["price"]:
+                best[dest["name"]][kind] = rec
+
+    failed = []
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        for task, flights, status in pool.map(work, tasks):
+            if status == "skipped":
+                if not state["stop"]:
+                    stats["stopped"] = "time"
+                continue
+            handle(task, flights, status)
+            if status in ("empty", "error"):
+                failed.append(task)
+
+    # second pass: destinations that ended with no accepted offer at all are retried once
+    # (Google sometimes answers 'no flights' for a whole route for a while)
+    retry = [t for t in failed if stats["diag"][t[3]["name"]]["accepted"] == 0]
+    if retry and not stats["stopped"]:
+        stats["retried"] = len(retry)
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            for task, flights, status in pool.map(work, retry):
+                if status == "skipped":
+                    stats["stopped"] = stats["stopped"] or "time"
                     continue
-                diag["offers"] += 1
-                kind = classify(offer, dest, cfg)
-                if not kind:
-                    diag[_why_rejected(offer, dest, cfg)] += 1
-                    if len(diag["samples"]) < 8:
-                        diag["samples"].append(
-                            f"{'+'.join(offer['airlines'])} {offer['stops']}stops {'/'.join(offer['route'])} {offer['price']}")
-                    continue
-                diag["accepted"] += 1
-                known = [x for x in offer["layovers"] if x is not None]
-                rec = {
-                    "price": offer["price"],
-                    "airlines": offer["airlines"],
-                    "airport": code,
-                    "depart": dep.isoformat(),
-                    "return": ret.isoformat(),
-                    "days": stay,
-                    "stops": offer["stops"],
-                    "layover_h": round(max(known), 1) if known else 0,
-                    "url": airline_url(offer["airlines"], cfg, dest),
-                }
-                cur = best[dest["name"]][kind]
-                if cur is None or rec["price"] < cur["price"]:
-                    best[dest["name"]][kind] = rec
+                handle(task, flights, status, count=False)
     return best, stats
 
 
